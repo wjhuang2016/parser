@@ -200,6 +200,7 @@ const (
 	MakeSet         = "make_set"
 	Mid             = "mid"
 	Oct             = "oct"
+	OctetLength     = "octet_length"
 	Ord             = "ord"
 	Position        = "position"
 	Quote           = "quote"
@@ -233,6 +234,7 @@ const (
 	Collation      = "collation"
 	ConnectionID   = "connection_id"
 	CurrentUser    = "current_user"
+	CurrentRole    = "current_role"
 	Database       = "database"
 	FoundRows      = "found_rows"
 	LastInsertId   = "last_insert_id"
@@ -511,7 +513,7 @@ func (n *FuncCastExpr) Restore(ctx *RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 		ctx.WriteKeyWord(" AS ")
-		n.Tp.FormatAsCastType(ctx.In)
+		n.Tp.RestoreAsCastType(ctx)
 		ctx.WritePlain(")")
 	case CastConvertFunction:
 		ctx.WriteKeyWord("CONVERT")
@@ -520,7 +522,7 @@ func (n *FuncCastExpr) Restore(ctx *RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore FuncCastExpr.Expr")
 		}
 		ctx.WritePlain(", ")
-		n.Tp.FormatAsCastType(ctx.In)
+		n.Tp.RestoreAsCastType(ctx)
 		ctx.WritePlain(")")
 	case CastBinaryOperator:
 		ctx.WriteKeyWord("BINARY ")
