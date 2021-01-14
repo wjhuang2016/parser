@@ -856,6 +856,22 @@ func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+func (n *WithClause) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+
+	for _, cte := range n.CTEs {
+		node, ok := cte.Query.Accept(v)
+		if !ok {
+			return n, false
+		}
+		cte.Query = node.(*SubqueryExpr)
+	}
+	return v.Leave(n)
+}
+
 // Restore implements Node interface.
 func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.With != nil {
