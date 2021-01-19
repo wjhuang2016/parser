@@ -861,7 +861,8 @@ import (
 	ColumnNameOrUserVariableList           "column name or user variable list"
 	ColumnList                             "column list"
 	ColumnNameListOpt                      "column name list opt"
-	ColumnNameListWithParenOpt             "column name list opt with parentheses"
+	IdentList                              "identifier list"
+	IdentListWithParenOpt                  "column name list opt with parentheses"
 	ColumnNameOrUserVarListOpt             "column name or user vairiabe list opt"
 	ColumnNameOrUserVarListOptWithBrackets "column name or user variable list opt with brackets"
 	ColumnSetValue                         "insert statement set value by column name"
@@ -2442,14 +2443,24 @@ ColumnNameListOpt:
 	}
 |	ColumnNameList
 
-ColumnNameListWithParenOpt:
+IdentListWithParenOpt:
 	/* EMPTY */
 	{
-		$$ = []*ast.ColumnName{}
+		$$ = []model.CIStr{}
 	}
-|	'(' ColumnNameList ')'
+|	'(' IdentList ')'
 	{
 		$$ = $2
+	}
+
+IdentList:
+	Identifier
+	{
+		$$ = []model.CIStr{model.NewCIStr($1)}
+	}
+|	IdentList ',' Identifier
+	{
+		$$ = append($1.([]model.CIStr), model.NewCIStr($3))
 	}
 
 ColumnNameOrUserVarListOpt:
@@ -7192,11 +7203,11 @@ WithList:
 	}
 
 CommonTableExpr:
-	Identifier ColumnNameListWithParenOpt "AS" SubSelect
+	Identifier IdentListWithParenOpt "AS" SubSelect
 	{
 		cte := &ast.CommonTableExpression{}
 		cte.Name = model.NewCIStr($1)
-		cte.NameList = $2.([]*ast.ColumnName)
+		cte.ColNameList = $2.([]model.CIStr)
 		cte.Query = $4.(*ast.SubqueryExpr)
 		$$ = cte
 	}

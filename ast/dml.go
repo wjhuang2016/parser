@@ -770,9 +770,9 @@ func (n *OrderByClause) Accept(v Visitor) (Node, bool) {
 type CommonTableExpression struct {
 	node
 
-	Name     model.CIStr
-	Query    *SubqueryExpr
-	NameList []*ColumnName
+	Name        model.CIStr
+	Query       *SubqueryExpr
+	ColNameList []model.CIStr
 }
 
 type WithClause struct {
@@ -832,11 +832,11 @@ func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 			first = false
 		}
 		ctx.WriteName(cte.Name.String())
-		if len(cte.NameList) > 0 {
+		if len(cte.ColNameList) > 0 {
 			ctx.WritePlain(" ")
 			ctx.WritePlain("(")
 			f := true
-			for _, name := range cte.NameList {
+			for _, name := range cte.ColNameList {
 				if !f {
 					ctx.WritePlain(", ")
 				} else {
