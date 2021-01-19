@@ -7177,10 +7177,10 @@ OptWithClause:
 |	WithClause
 
 WithList:
-	WithList CommonTableExpr
+	WithList ',' CommonTableExpr
 	{
 		ws := $1.(*ast.WithClause)
-		ws.CTEs = append(ws.CTEs, $2.(*ast.CommonTableExpression))
+		ws.CTEs = append(ws.CTEs, $3.(*ast.CommonTableExpression))
 		$$ = ws
 	}
 |	CommonTableExpr
