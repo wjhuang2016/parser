@@ -826,7 +826,6 @@ import (
 	UnlockTablesStmt     "Unlock tables statement"
 	UpdateStmt           "UPDATE statement"
 	UnionStmt            "Union select statement"
-	UnionWithStmt        "Union select statement with"
 	UseStmt              "USE statement"
 	ShutdownStmt         "SHUTDOWN statement"
 	CreateViewSelectOpt  "Select/Union statement in CREATE VIEW ... AS SELECT"
@@ -7960,18 +7959,6 @@ SelectLockOpt:
 |	"LOCK" "IN" "SHARE" "MODE"
 	{
 		$$ = ast.SelectLockInShareMode
-	}
-
-UnionWithStmt:
-	UnionStmt
-	{
-		$$ = $1
-	}
-|	WithClause UnionStmt
-	{
-		union := $1.(*ast.UnionStmt)
-		union.With = $1.(*ast.WithClause)
-		$$ = union
 	}
 
 // See https://dev.mysql.com/doc/refman/5.7/en/union.html
