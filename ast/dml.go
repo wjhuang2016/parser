@@ -1195,6 +1195,13 @@ func (n *UnionStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UnionStmt)
+	if n.With != nil {
+		node, ok := n.With.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.With = node.(*WithClause)
+	}
 	if n.SelectList != nil {
 		node, ok := n.SelectList.Accept(v)
 		if !ok {
