@@ -827,6 +827,7 @@ import (
 	UnlockTablesStmt     "Unlock tables statement"
 	UpdateStmt           "UPDATE statement"
 	UnionStmt            "Union select statement"
+	UnionStmtNoWith      "Union select statement no with part"
 	UseStmt              "USE statement"
 	ShutdownStmt         "SHUTDOWN statement"
 	CreateViewSelectOpt  "Select/Union statement in CREATE VIEW ... AS SELECT"
@@ -7905,6 +7906,15 @@ SelectLockOpt:
 
 // See https://dev.mysql.com/doc/refman/5.7/en/union.html
 UnionStmt:
+	UnionStmtNoWith
+|	WithClause UnionStmtNoWith
+	{
+		union := $2.(*ast.UnionStmt)
+		union.With = $1.(*ast.WithClause)
+		$$ = union
+	}
+
+UnionStmtNoWith:
 	UnionClauseList "UNION" UnionOpt SelectStmtBasic OrderByOptional SelectStmtLimit SelectLockOpt
 	{
 		st := $4.(*ast.SelectStmt)
@@ -8007,7 +8017,7 @@ UnionClauseList:
 	}
 
 UnionSelect:
-	SelectStmt
+	SelectStmtNoWith
 |	'(' SelectStmt ')'
 	{
 		st := $2.(*ast.SelectStmt)
