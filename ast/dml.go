@@ -1157,10 +1157,17 @@ type UnionStmt struct {
 	SelectList *UnionSelectList
 	OrderBy    *OrderByClause
 	Limit      *Limit
+	With       *WithClause
 }
 
 // Restore implements Node interface.
 func (n *UnionStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.With != nil {
+		if err := n.With.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UnionStmt.With")
+		}
+	}
+
 	if err := n.SelectList.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore UnionStmt.SelectList")
 	}

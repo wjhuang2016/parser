@@ -825,7 +825,8 @@ import (
 	TruncateTableStmt    "TRUNCATE TABLE statement"
 	UnlockTablesStmt     "Unlock tables statement"
 	UpdateStmt           "UPDATE statement"
-	UnionStmt            "Union select state ment"
+	UnionStmt            "Union select statement"
+	UnionWithStmt        "Union select statement with"
 	UseStmt              "USE statement"
 	ShutdownStmt         "SHUTDOWN statement"
 	CreateViewSelectOpt  "Select/Union statement in CREATE VIEW ... AS SELECT"
@@ -1261,6 +1262,8 @@ import (
 %precedence stringLit
 %precedence lowerThanSetKeyword
 %precedence set
+%precedence selectKwd
+%precedence lowerThanSelectStmt
 %precedence lowerThanInsertValues
 %precedence insertValues
 %precedence lowerThanCreateTableSelect
@@ -7957,6 +7960,18 @@ SelectLockOpt:
 |	"LOCK" "IN" "SHARE" "MODE"
 	{
 		$$ = ast.SelectLockInShareMode
+	}
+
+UnionWithStmt:
+	UnionStmt
+	{
+		$$ = $1
+	}
+|	WithClause UnionStmt
+	{
+		union := $1.(*ast.UnionStmt)
+		union.With = $1.(*ast.WithClause)
+		$$ = union
 	}
 
 // See https://dev.mysql.com/doc/refman/5.7/en/union.html
