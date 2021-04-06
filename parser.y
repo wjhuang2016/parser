@@ -495,6 +495,7 @@ import (
 	replica               "REPLICA"
 	replication           "REPLICATION"
 	respect               "RESPECT"
+	restart               "RESTART"
 	restore               "RESTORE"
 	restores              "RESTORES"
 	reverse               "REVERSE"
@@ -612,6 +613,7 @@ import (
 	now                   "NOW"
 	position              "POSITION"
 	recent                "RECENT"
+	s3                    "S3"
 	staleness             "STALENESS"
 	std                   "STD"
 	stddev                "STDDEV"
@@ -763,6 +765,7 @@ import (
 	AlterTableStmt       "Alter table statement"
 	AlterUserStmt        "Alter user statement"
 	AlterInstanceStmt    "Alter instance statement"
+	AlterSequenceStmt    "Alter sequence statement"
 	AnalyzeTableStmt     "Analyze table statement"
 	BeginTransactionStmt "BEGIN TRANSACTION statement"
 	BinlogStmt           "Binlog base64 statement"
@@ -837,6 +840,8 @@ import (
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
+	AlterSequenceOption                    "Alter sequence option"
+	AlterSequenceOptionList                "Alter sequence option list"
 	AnalyzeOption                          "Analyze option"
 	AnalyzeOptionList                      "Analyze option list"
 	AnalyzeOptionListOpt                   "Optional analyze option list"
@@ -890,6 +895,7 @@ import (
 	EqOpt                                  "= or empty"
 	EscapedTableRef                        "escaped table reference"
 	ExpressionList                         "expression list"
+	ExtendedPriv                           "Extended privileges like LOAD FROM S3 or dynamic privileges"
 	MaxValueOrExpressionList               "maxvalue or expression list"
 	ExpressionListOpt                      "expression list opt"
 	FuncDatetimePrecListOpt                "Function datetime precision list opt"
@@ -983,7 +989,6 @@ import (
 	PrepareSQL                             "Prepare statement sql string"
 	PriorityOpt                            "Statement priority option"
 	PrivElem                               "Privilege element"
-	PrivElemList                           "Privilege element list"
 	PrivLevel                              "Privilege scope"
 	PrivType                               "Privilege type"
 	ReferDef                               "Reference definition"
@@ -996,7 +1001,11 @@ import (
 	RequireList                            "require list"
 	RequireListElement                     "require list element"
 	Rolename                               "Rolename"
+	RolenameComposed                       "Rolename that composed with more than 1 symbol"
 	RolenameList                           "RolenameList"
+	RolenameWithoutIdent                   "Rolename except identifier"
+	RoleOrPrivElem                         "Element that may be a Rolename or PrivElem"
+	RoleOrPrivElemList                     "RoleOrPrivElem list"
 	RoleSpec                               "Rolename and auth option"
 	RoleSpecList                           "Rolename and auth option list"
 	RowFormat                              "Row format option"
@@ -1835,9 +1844,8 @@ AlterTableSpec:
 		yylex.AppendError(yylex.Errorf("The SECONDARY_UNLOAD VALIDATION clause is parsed but not implement yet."))
 		parser.lastErrorAsWarn()
 	}
-|	"ALTER" "CHECK" Identifier EnforcedOrNot
+|	"ALTER" CheckConstraintKeyword Identifier EnforcedOrNot
 	{
-		// Parse it and ignore it. Just for compatibility.
 		c := &ast.Constraint{
 			Name:     $3,
 			Enforced: $4.(bool),
@@ -1846,10 +1854,8 @@ AlterTableSpec:
 			Tp:         ast.AlterTableAlterCheck,
 			Constraint: c,
 		}
-		yylex.AppendError(yylex.Errorf("The ALTER CHECK clause is parsed but not implemented yet."))
-		parser.lastErrorAsWarn()
 	}
-|	"DROP" "CHECK" Identifier
+|	"DROP" CheckConstraintKeyword Identifier
 	{
 		// Parse it and ignore it. Just for compatibility.
 		c := &ast.Constraint{
@@ -1859,8 +1865,6 @@ AlterTableSpec:
 			Tp:         ast.AlterTableDropCheck,
 			Constraint: c,
 		}
-		yylex.AppendError(yylex.Errorf("The DROP CHECK clause is parsed but not implemented yet."))
-		parser.lastErrorAsWarn()
 	}
 |	"ALTER" "INDEX" Identifier IndexInvisible
 	{
@@ -2593,6 +2597,10 @@ ColumnOption:
 			Expr:     $4,
 			Enforced: true,
 		}
+		// Keep the column type check constraint name.
+		if $1 != nil {
+			optionCheck.ConstraintName = $1.(string)
+		}
 		switch $6.(int) {
 		case 0:
 			$$ = []*ast.ColumnOption{optionCheck, {Tp: ast.ColumnOptionNotNull}}
@@ -2604,8 +2612,6 @@ ColumnOption:
 			$$ = optionCheck
 		default:
 		}
-		yylex.AppendError(yylex.Errorf("The CHECK clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 |	GeneratedAlways "AS" '(' Expression ')' VirtualOrStored
 	{
@@ -2791,8 +2797,6 @@ ConstraintElem:
 			Expr:     $3.(ast.ExprNode),
 			Enforced: $5.(bool),
 		}
-		yylex.AppendError(yylex.Errorf("The CHECK clause is parsed but ignored by all storage engines."))
-		parser.lastErrorAsWarn()
 	}
 
 Match:
@@ -3549,6 +3553,31 @@ PartDefValuesOpt:
 		}
 		$$ = &ast.PartitionDefinitionClauseIn{Values: values}
 	}
+|	"VALUES" "IN" '(' "DEFAULT" ')'
+	{
+		exprs := []ast.ExprNode{&ast.DefaultValueExpr{}}
+		values := [][]ast.ExprNode{exprs}
+		$$ = &ast.PartitionDefinitionClauseIn{Values: values}
+	}
+|	"VALUES" '(' MaxValueOrExpressionList ')'
+	{
+		exprs := $3.([]ast.ExprNode)
+		values := make([][]ast.ExprNode, 0, len(exprs))
+		for _, expr := range exprs {
+			if row, ok := expr.(*ast.RowExpr); ok {
+				values = append(values, row.Values)
+			} else {
+				values = append(values, []ast.ExprNode{expr})
+			}
+		}
+		$$ = &ast.PartitionDefinitionClauseIn{Values: values}
+	}
+|	"VALUES" '(' "DEFAULT" ')'
+	{
+		exprs := []ast.ExprNode{&ast.DefaultValueExpr{}}
+		values := [][]ast.ExprNode{exprs}
+		$$ = &ast.PartitionDefinitionClauseIn{Values: values}
+	}
 |	"HISTORY"
 	{
 		$$ = &ast.PartitionDefinitionClauseHistory{Current: false}
@@ -3759,12 +3788,13 @@ DoStmt:
  *
  *******************************************************************/
 DeleteFromStmt:
-	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableName TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" TableOptimizerHints PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
 	{
 		// Single Table
 		tn := $7.(*ast.TableName)
-		tn.IndexHints = $9.([]*ast.IndexHint)
-		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $8.(model.CIStr)}, Right: nil}
+		tn.IndexHints = $10.([]*ast.IndexHint)
+		tn.PartitionNames = $8.([]model.CIStr)
+		join := &ast.Join{Left: &ast.TableSource{Source: tn, AsName: $9.(model.CIStr)}, Right: nil}
 		x := &ast.DeleteStmt{
 			TableRefs: &ast.TableRefsClause{TableRefs: join},
 			Priority:  $3.(mysql.PriorityEnum),
@@ -3774,14 +3804,14 @@ DeleteFromStmt:
 		if $2 != nil {
 			x.TableHints = $2.([]*ast.TableOptimizerHint)
 		}
-		if $10 != nil {
-			x.Where = $10.(ast.ExprNode)
-		}
 		if $11 != nil {
-			x.Order = $11.(*ast.OrderByClause)
+			x.Where = $11.(ast.ExprNode)
 		}
 		if $12 != nil {
-			x.Limit = $12.(*ast.Limit)
+			x.Order = $12.(*ast.OrderByClause)
+		}
+		if $13 != nil {
+			x.Limit = $13.(*ast.Limit)
 		}
 
 		$$ = x
@@ -5054,6 +5084,7 @@ UnReservedKeyword:
 |	"REBUILD"
 |	"REDUNDANT"
 |	"REORGANIZE"
+|	"RESTART"
 |	"ROLE"
 |	"ROLLBACK"
 |	"SESSION"
@@ -5338,6 +5369,7 @@ NotKeywordToken:
 |	"NOW"
 |	"RECENT"
 |	"POSITION"
+|	"S3"
 |	"SUBDATE"
 |	"SUBSTRING"
 |	"SUM"
@@ -5378,17 +5410,21 @@ NotKeywordToken:
  *  TODO: support PARTITION
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" PriorityOpt IgnoreOptional IntoOpt TableName InsertValues OnDuplicateKeyUpdate
+	"INSERT" TableOptimizerHints PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate
 	{
-		x := $6.(*ast.InsertStmt)
-		x.Priority = $2.(mysql.PriorityEnum)
-		x.IgnoreErr = $3.(bool)
+		x := $8.(*ast.InsertStmt)
+		x.Priority = $3.(mysql.PriorityEnum)
+		x.IgnoreErr = $4.(bool)
 		// Wraps many layers here so that it can be processed the same way as select statement.
-		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
+		ts := &ast.TableSource{Source: $6.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
-		if $7 != nil {
-			x.OnDuplicate = $7.([]*ast.Assignment)
+		if $9 != nil {
+			x.OnDuplicate = $9.([]*ast.Assignment)
 		}
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
+		x.PartitionNames = $7.([]model.CIStr)
 		$$ = x
 	}
 
@@ -5522,13 +5558,14 @@ OnDuplicateKeyUpdate:
  *  TODO: support PARTITION
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" PriorityOpt IntoOpt TableName InsertValues
+	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
 	{
-		x := $5.(*ast.InsertStmt)
+		x := $6.(*ast.InsertStmt)
 		x.IsReplace = true
 		x.Priority = $2.(mysql.PriorityEnum)
 		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
+		x.PartitionNames = $5.([]model.CIStr)
 		$$ = x
 	}
 
@@ -8376,7 +8413,7 @@ VariableAssignment:
 	}
 |	CharsetKw CharsetNameOrDefault
 	{
-		$$ = &ast.VariableAssignment{Name: ast.SetNames, Value: $2}
+		$$ = &ast.VariableAssignment{Name: ast.SetCharset, Value: $2}
 	}
 
 CharsetNameOrDefault:
@@ -8508,18 +8545,34 @@ RoleNameString:
 	stringLit
 |	identifier
 
-Rolename:
-	RoleNameString
-	{
-		$$ = &auth.RoleIdentity{Username: $1, Hostname: "%"}
-	}
-|	StringName '@' StringName
+RolenameComposed:
+	StringName '@' StringName
 	{
 		$$ = &auth.RoleIdentity{Username: $1, Hostname: $3}
 	}
 |	StringName singleAtIdentifier
 	{
 		$$ = &auth.RoleIdentity{Username: $1, Hostname: strings.TrimPrefix($2, "@")}
+	}
+
+RolenameWithoutIdent:
+	stringLit
+	{
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: "%"}
+	}
+|	RolenameComposed
+	{
+		$$ = $1
+	}
+
+Rolename:
+	RoleNameString
+	{
+		$$ = &auth.RoleIdentity{Username: $1, Hostname: "%"}
+	}
+|	RolenameComposed
+	{
+		$$ = $1
 	}
 
 RolenameList:
@@ -8806,14 +8859,15 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
-|	"SHOW" "TABLE" TableName "REGIONS" WhereClauseOptional
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
 			Tp:    ast.ShowRegions,
 			Table: $3.(*ast.TableName),
 		}
-		if $5 != nil {
-			stmt.Where = $5.(ast.ExprNode)
+		stmt.Table.PartitionNames = $4.([]model.CIStr)
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
 		}
 		$$ = stmt
 	}
@@ -8824,15 +8878,16 @@ ShowStmt:
 			Table: $3.(*ast.TableName),
 		}
 	}
-|	"SHOW" "TABLE" TableName "INDEX" Identifier "REGIONS" WhereClauseOptional
+|	"SHOW" "TABLE" TableName PartitionNameListOpt "INDEX" Identifier "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
 			Tp:        ast.ShowRegions,
 			Table:     $3.(*ast.TableName),
-			IndexName: model.NewCIStr($5),
+			IndexName: model.NewCIStr($6),
 		}
-		if $7 != nil {
-			stmt.Where = $7.(ast.ExprNode)
+		stmt.Table.PartitionNames = $4.([]model.CIStr)
+		if $8 != nil {
+			stmt.Where = $8.(ast.ExprNode)
 		}
 		$$ = stmt
 	}
@@ -9355,6 +9410,7 @@ Statement:
 |	AlterTableStmt
 |	AlterUserStmt
 |	AlterInstanceStmt
+|	AlterSequenceStmt
 |	AnalyzeTableStmt
 |	BeginTransactionStmt
 |	BinlogStmt
@@ -9473,6 +9529,10 @@ Constraint:
 		}
 		$$ = cst
 	}
+
+CheckConstraintKeyword:
+	"CHECK"
+|	"CONSTRAINT"
 
 TableElement:
 	ColumnDef
@@ -10939,10 +10999,15 @@ DropBindingStmt:
  * See https://dev.mysql.com/doc/refman/5.7/en/grant.html
  *************************************************************************************/
 GrantStmt:
-	"GRANT" PrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList RequireClauseOpt WithGrantOptionOpt
+	"GRANT" RoleOrPrivElemList "ON" ObjectType PrivLevel "TO" UserSpecList RequireClauseOpt WithGrantOptionOpt
 	{
+		p, err := convertToPriv($2.([]*ast.RoleOrPriv))
+		if err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
 		$$ = &ast.GrantStmt{
-			Privs:      $2.([]*ast.PrivElem),
+			Privs:      p,
 			ObjectType: $4.(ast.ObjectTypeType),
 			Level:      $5.(*ast.GrantLevel),
 			Users:      $7.([]*ast.UserSpec),
@@ -10952,10 +11017,15 @@ GrantStmt:
 	}
 
 GrantRoleStmt:
-	"GRANT" RolenameList "TO" UsernameList
+	"GRANT" RoleOrPrivElemList "TO" UsernameList
 	{
+		r, err := convertToRole($2.([]*ast.RoleOrPriv))
+		if err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
 		$$ = &ast.GrantRoleStmt{
-			Roles: $2.([]*auth.RoleIdentity),
+			Roles: r,
 			Users: $4.([]*auth.UserIdentity),
 		}
 	}
@@ -10985,6 +11055,58 @@ WithGrantOptionOpt:
 		$$ = false
 	}
 
+ExtendedPriv:
+	identifier
+	{
+		$$ = []string{$1}
+	}
+|	ExtendedPriv identifier
+	{
+		$$ = append($1.([]string), $2)
+	}
+
+RoleOrPrivElem:
+	PrivElem
+	{
+		$$ = &ast.RoleOrPriv{
+			Node: $1,
+		}
+	}
+|	RolenameWithoutIdent
+	{
+		$$ = &ast.RoleOrPriv{
+			Node: $1,
+		}
+	}
+|	ExtendedPriv
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: strings.Join($1.([]string), " "),
+		}
+	}
+|	"LOAD" "FROM" "S3"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "LOAD FROM S3",
+		}
+	}
+|	"SELECT" "INTO" "S3"
+	{
+		$$ = &ast.RoleOrPriv{
+			Symbols: "SELECT INTO S3",
+		}
+	}
+
+RoleOrPrivElemList:
+	RoleOrPrivElem
+	{
+		$$ = []*ast.RoleOrPriv{$1.(*ast.RoleOrPriv)}
+	}
+|	RoleOrPrivElemList ',' RoleOrPrivElem
+	{
+		$$ = append($1.([]*ast.RoleOrPriv), $3.(*ast.RoleOrPriv))
+	}
+
 PrivElem:
 	PrivType
 	{
@@ -10998,16 +11120,6 @@ PrivElem:
 			Priv: $1.(mysql.PrivilegeType),
 			Cols: $3.([]*ast.ColumnName),
 		}
-	}
-
-PrivElemList:
-	PrivElem
-	{
-		$$ = []*ast.PrivElem{$1.(*ast.PrivElem)}
-	}
-|	PrivElemList ',' PrivElem
-	{
-		$$ = append($1.([]*ast.PrivElem), $3.(*ast.PrivElem))
 	}
 
 PrivType:
@@ -11197,10 +11309,15 @@ PrivLevel:
  * See https://dev.mysql.com/doc/refman/5.7/en/revoke.html
  *******************************************************************************************/
 RevokeStmt:
-	"REVOKE" PrivElemList "ON" ObjectType PrivLevel "FROM" UserSpecList
+	"REVOKE" RoleOrPrivElemList "ON" ObjectType PrivLevel "FROM" UserSpecList
 	{
+		p, err := convertToPriv($2.([]*ast.RoleOrPriv))
+		if err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
 		$$ = &ast.RevokeStmt{
-			Privs:      $2.([]*ast.PrivElem),
+			Privs:      p,
 			ObjectType: $4.(ast.ObjectTypeType),
 			Level:      $5.(*ast.GrantLevel),
 			Users:      $7.([]*ast.UserSpec),
@@ -11208,10 +11325,15 @@ RevokeStmt:
 	}
 
 RevokeRoleStmt:
-	"REVOKE" RolenameList "FROM" UsernameList
+	"REVOKE" RoleOrPrivElemList "FROM" UsernameList
 	{
+		r, err := convertToRole($2.([]*ast.RoleOrPriv))
+		if err != nil {
+			yylex.AppendError(err)
+			return 1
+		}
 		$$ = &ast.RevokeRoleStmt{
-			Roles: $2.([]*auth.RoleIdentity),
+			Roles: r,
 			Users: $4.([]*auth.UserIdentity),
 		}
 	}
@@ -11681,6 +11803,55 @@ DropSequenceStmt:
 			IfExists:  $3.(bool),
 			Sequences: $4.([]*ast.TableName),
 		}
+	}
+
+/********************************************************************************************
+ *
+ *  Alter Sequence Statement
+ *
+ *  Example:
+ *	ALTER SEQUENCE [IF EXISTS] sequence_name
+ *	[ INCREMENT [ BY | = ] increment ]
+ *	[ MINVALUE [=] minvalue | NO MINVALUE | NOMINVALUE ]
+ *	[ MAXVALUE [=] maxvalue | NO MAXVALUE | NOMAXVALUE ]
+ *	[ START [ WITH | = ] start ]
+ *	[ CACHE [=] cache | NOCACHE | NO CACHE]
+ *	[ CYCLE | NOCYCLE | NO CYCLE]
+ *	[ RESTART [WITH | = ] restart ]
+ ********************************************************************************************/
+AlterSequenceStmt:
+	"ALTER" "SEQUENCE" IfExists TableName AlterSequenceOptionList
+	{
+		$$ = &ast.AlterSequenceStmt{
+			IfExists:   $3.(bool),
+			Name:       $4.(*ast.TableName),
+			SeqOptions: $5.([]*ast.SequenceOption),
+		}
+	}
+
+AlterSequenceOptionList:
+	AlterSequenceOption
+	{
+		$$ = []*ast.SequenceOption{$1.(*ast.SequenceOption)}
+	}
+|	AlterSequenceOptionList AlterSequenceOption
+	{
+		$$ = append($1.([]*ast.SequenceOption), $2.(*ast.SequenceOption))
+	}
+
+AlterSequenceOption:
+	SequenceOption
+|	"RESTART"
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceRestart}
+	}
+|	"RESTART" EqOpt SignedNum
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceRestartWith, IntValue: $3.(int64)}
+	}
+|	"RESTART" "WITH" SignedNum
+	{
+		$$ = &ast.SequenceOption{Tp: ast.SequenceRestartWith, IntValue: $3.(int64)}
 	}
 
 /********************************************************************

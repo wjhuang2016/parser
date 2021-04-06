@@ -105,7 +105,7 @@ func (s *testParserSuite) TestSimple(c *C) {
 		"ln", "log", "log2", "log10", "timestampdiff", "pi", "quote", "none", "super", "shared", "exclusive",
 		"always", "stats", "stats_meta", "stats_histogram", "stats_buckets", "stats_healthy", "tidb_version", "replication", "slave", "client",
 		"max_connections_per_hour", "max_queries_per_hour", "max_updates_per_hour", "max_user_connections", "event", "reload", "routine", "temporary",
-		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion",
+		"following", "preceding", "unbounded", "respect", "nulls", "current", "last", "against", "expansion", "s3",
 	}
 	for _, kw := range unreservedKws {
 		src := fmt.Sprintf("SELECT %s FROM tbl;", kw)
@@ -420,6 +420,10 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"INSERT INTO foo VALUES (1234)", true, "INSERT INTO `foo` VALUES (1234)"},
 		{"INSERT INTO foo VALUES (1234, 5678)", true, "INSERT INTO `foo` VALUES (1234,5678)"},
 		{"INSERT INTO t1 (SELECT * FROM t2)", true, "INSERT INTO `t1` SELECT * FROM `t2`"},
+		{"INSERT INTO t partition (p0) values(1234)", true, "INSERT INTO `t` PARTITION(`p0`) VALUES (1234)"},
+		{"REPLACE INTO t partition (p0) values(1234)", true, "REPLACE INTO `t` PARTITION(`p0`) VALUES (1234)"},
+		{"INSERT INTO t partition (p0, p1, p2) values(1234)", true, "INSERT INTO `t` PARTITION(`p0`, `p1`, `p2`) VALUES (1234)"},
+		{"REPLACE INTO t partition (p0, p1, p2) values(1234)", true, "REPLACE INTO `t` PARTITION(`p0`, `p1`, `p2`) VALUES (1234)"},
 		// 15
 		{"INSERT INTO foo VALUES (1 || 2)", true, "INSERT INTO `foo` VALUES (1 OR 2)"},
 		{"INSERT INTO foo VALUES (1 | 2)", true, "INSERT INTO `foo` VALUES (1|2)"},
@@ -621,11 +625,13 @@ func (s *testParserSuite) TestDMLStmt(c *C) {
 		{"DELETE FROM t1 WHERE t1.a > 0 ORDER BY t1.a LIMIT 1", true, "DELETE FROM `t1` WHERE `t1`.`a`>0 ORDER BY `t1`.`a` LIMIT 1"},
 		{"DELETE FROM x.y z WHERE z.a > 0", true, "DELETE FROM `x`.`y` AS `z` WHERE `z`.`a`>0"},
 		{"DELETE FROM t1 AS w WHERE a > 0", true, "DELETE FROM `t1` AS `w` WHERE `a`>0"},
+		{"DELETE from t1 partition (p0,p1)", true, "DELETE FROM `t1` PARTITION(`p0`, `p1`)"},
 
 		// multi table syntax: before from
 		{"delete low_priority t1, t2 from t1, t2", true, "DELETE LOW_PRIORITY `t1`,`t2` FROM (`t1`) JOIN `t2`"},
 		{"delete quick t1, t2 from t1, t2", true, "DELETE QUICK `t1`,`t2` FROM (`t1`) JOIN `t2`"},
 		{"delete ignore t1, t2 from t1, t2", true, "DELETE IGNORE `t1`,`t2` FROM (`t1`) JOIN `t2`"},
+		{"delete ignore t1, t2 from t1 partition (p0,p1), t2", true, "DELETE IGNORE `t1`,`t2` FROM (`t1` PARTITION(`p0`, `p1`)) JOIN `t2`"},
 		{"delete low_priority quick ignore t1, t2 from t1, t2 where t1.a > 5", true, "DELETE LOW_PRIORITY QUICK IGNORE `t1`,`t2` FROM (`t1`) JOIN `t2` WHERE `t1`.`a`>5"},
 		{"delete t1, t2 from t1, t2", true, "DELETE `t1`,`t2` FROM (`t1`) JOIN `t2`"},
 		{"delete t1, t2 from t1, t2 where t1.a = 1 and t2.b <> 1", true, "DELETE `t1`,`t2` FROM (`t1`) JOIN `t2` WHERE `t1`.`a`=1 AND `t2`.`b`!=1"},
@@ -827,6 +833,14 @@ AAAAAAAAAAAA5gm5Mg==
 		{"show table t1 index idx1 regions where a=2", true, "SHOW TABLE `t1` INDEX `idx1` REGIONS WHERE `a`=2"},
 		{"show table t1 index idx1", false, ""},
 
+		// for show table partition regions.
+		{"show table t1 partition (p0,p1) regions", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) REGIONS"},
+		{"show table t1 partition (p0) regions where a=1", true, "SHOW TABLE `t1` PARTITION(`p0`) REGIONS WHERE `a`=1"},
+		{"show table t1 partition", false, ""},
+		{"show table t1 partition (p0) index idx1 regions", true, "SHOW TABLE `t1` PARTITION(`p0`) INDEX `idx1` REGIONS"},
+		{"show table t1 partition (p0,p1) index idx1 regions where a=2", true, "SHOW TABLE `t1` PARTITION(`p0`, `p1`) INDEX `idx1` REGIONS WHERE `a`=2"},
+		{"show table t1 partition index idx1", false, ""},
+
 		// for show table next_row_id.
 		{"show table t1.t1 next_row_id", true, "SHOW TABLE `t1`.`t1` NEXT_ROW_ID"},
 		{"show table t1 next_row_id", true, "SHOW TABLE `t1` NEXT_ROW_ID"},
@@ -994,8 +1008,8 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET @@global.autocommit = default", true, "SET @@GLOBAL.`autocommit`=DEFAULT"},
 		{"SET @@session.autocommit = default", true, "SET @@SESSION.`autocommit`=DEFAULT"},
 		// SET CHARACTER SET
-		{"SET CHARACTER SET utf8mb4;", true, "SET NAMES 'utf8mb4'"},
-		{"SET CHARACTER SET 'utf8mb4';", true, "SET NAMES 'utf8mb4'"},
+		{"SET CHARACTER SET utf8mb4;", true, "SET CHARSET 'utf8mb4'"},
+		{"SET CHARACTER SET 'utf8mb4';", true, "SET CHARSET 'utf8mb4'"},
 		// set password
 		{"SET PASSWORD = 'password';", true, "SET PASSWORD='password'"},
 		{"SET PASSWORD FOR 'root'@'localhost' = 'password';", true, "SET PASSWORD FOR `root`@`localhost`='password'"},
@@ -1020,9 +1034,9 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 
 		// for set character set | name default
 		{"set names default", true, "SET NAMES DEFAULT"},
-		{"set character set default", true, "SET NAMES DEFAULT"},
-		{"set charset default", true, "SET NAMES DEFAULT"},
-		{"set char set default", true, "SET NAMES DEFAULT"},
+		{"set character set default", true, "SET CHARSET DEFAULT"},
+		{"set charset default", true, "SET CHARSET DEFAULT"},
+		{"set char set default", true, "SET CHARSET DEFAULT"},
 
 		{"set role `role1`", true, "SET ROLE `role1`@`%`"},
 		{"SET ROLE DEFAULT", true, "SET ROLE DEFAULT"},
@@ -1031,7 +1045,7 @@ func (s *testParserSuite) TestDBAStmt(c *C) {
 		{"SET DEFAULT ROLE administrator, developer TO `joe`@`10.0.0.1`", true, "SET DEFAULT ROLE `administrator`@`%`, `developer`@`%` TO `joe`@`10.0.0.1`"},
 		// for set names and set vars
 		{"set names utf8, @@session.sql_mode=1;", true, "SET NAMES 'utf8', @@SESSION.`sql_mode`=1"},
-		{"set @@session.sql_mode=1, names utf8, charset utf8;", true, "SET @@SESSION.`sql_mode`=1, NAMES 'utf8', NAMES 'utf8'"},
+		{"set @@session.sql_mode=1, names utf8, charset utf8;", true, "SET @@SESSION.`sql_mode`=1, NAMES 'utf8', CHARSET 'utf8'"},
 
 		// for set/show config
 		{"set config TIKV LOG.LEVEL='info'", true, "SET CONFIG TIKV LOG.LEVEL = 'info'"},
@@ -1877,6 +1891,11 @@ func (s *testParserSuite) TestBuiltin(c *C) {
 		{"select next value for seq", true, "SELECT NEXTVAL(`seq`)"},
 		{"select next value for sequence", true, "SELECT NEXTVAL(`sequence`)"},
 		{"select NeXt vAluE for seQuEncE2", true, "SELECT NEXTVAL(`seQuEncE2`)"},
+
+		// Test DecodeCase
+		{"select decode_case(1+2, 1, 2, 3, 4, 5, 6)", true, "SELECT DECODE_CASE(1+2, 1, 2, 3, 4, 5, 6)"},
+		{"select decode_case(1+2, 1, 'a', 6)", true, "SELECT DECODE_CASE(1+2, 1, 'a', 6)"},
+		{"select decode_case(a, 1, 'a', 6) from t", true, "SELECT DECODE_CASE(`a`, 1, 'a', 6) FROM `t`"},
 	}
 	s.RunTest(c, table)
 
@@ -2068,6 +2087,8 @@ func (s *testParserSuite) TestDDL(c *C) {
  PARTITION part9 VALUES LESS THAN (10) COMMENT = '10月份' ENGINE = InnoDB,
  PARTITION part10 VALUES LESS THAN (11) COMMENT = '11月份' ENGINE = InnoDB,
  PARTITION part11 VALUES LESS THAN (12) COMMENT = '12月份' ENGINE = InnoDB) */ ;`, true, "CREATE TABLE `app_channel_daily_report` (`id` BIGINT(20) NOT NULL AUTO_INCREMENT,`app_version` VARCHAR(32) COLLATE utf8_unicode_ci NOT NULL DEFAULT 'default',`gmt_create` DATETIME NOT NULL COMMENT '创建时间',PRIMARY KEY(`id`)) ENGINE = InnoDB AUTO_INCREMENT = 33703438 DEFAULT CHARACTER SET = UTF8 DEFAULT COLLATE = UTF8_UNICODE_CI PARTITION BY RANGE (MONTH(`gmt_create`)-1) (PARTITION `part0` VALUES LESS THAN (1) COMMENT = '1月份' ENGINE = InnoDB,PARTITION `part1` VALUES LESS THAN (2) COMMENT = '2月份' ENGINE = InnoDB,PARTITION `part2` VALUES LESS THAN (3) COMMENT = '3月份' ENGINE = InnoDB,PARTITION `part3` VALUES LESS THAN (4) COMMENT = '4月份' ENGINE = InnoDB,PARTITION `part4` VALUES LESS THAN (5) COMMENT = '5月份' ENGINE = InnoDB,PARTITION `part5` VALUES LESS THAN (6) COMMENT = '6月份' ENGINE = InnoDB,PARTITION `part6` VALUES LESS THAN (7) COMMENT = '7月份' ENGINE = InnoDB,PARTITION `part7` VALUES LESS THAN (8) COMMENT = '8月份' ENGINE = InnoDB,PARTITION `part8` VALUES LESS THAN (9) COMMENT = '9月份' ENGINE = InnoDB,PARTITION `part9` VALUES LESS THAN (10) COMMENT = '10月份' ENGINE = InnoDB,PARTITION `part10` VALUES LESS THAN (11) COMMENT = '11月份' ENGINE = InnoDB,PARTITION `part11` VALUES LESS THAN (12) COMMENT = '12月份' ENGINE = InnoDB)"},
+		{`CREATE TABLE t (a int, b int) partition by list (a) (partition p0 values IN (1), partition p1 values IN (DEFAULT))`, true, "CREATE TABLE `t` (`a` INT,`b` INT) PARTITION BY LIST (`a`) (PARTITION `p0` VALUES IN (1),PARTITION `p1` VALUES IN (DEFAULT))"},
+		{`CREATE TABLE t (a int, b int) partition by list (a) (partition p0 values (1), partition p1 values (DEFAULT))`, true, "CREATE TABLE `t` (`a` INT,`b` INT) PARTITION BY LIST (`a`) (PARTITION `p0` VALUES IN (1),PARTITION `p1` VALUES IN (DEFAULT))"},
 
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)) not enforced, check (c2 in (0, 1)))", true, "CREATE TABLE `t` (`c1` TINYINT(1),`c2` TINYINT(1),CHECK(`c1` IN (0,1)) NOT ENFORCED,CHECK(`c2` IN (0,1)) ENFORCED)"},
@@ -2499,6 +2520,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE t_n LOCK = DEFAULT , DROP CHECK ident;", true, "ALTER TABLE `t_n` LOCK = DEFAULT, DROP CHECK `ident`"},
 		{"ALTER TABLE t_n ALTER CHECK ident ENFORCED;", true, "ALTER TABLE `t_n` ALTER CHECK `ident` ENFORCED"},
 		{"ALTER TABLE t_n ALTER CHECK ident NOT ENFORCED;", true, "ALTER TABLE `t_n` ALTER CHECK `ident` NOT ENFORCED"},
+		{"ALTER TABLE t_n DROP CONSTRAINT ident", true, "ALTER TABLE `t_n` DROP CHECK `ident`"},
+		{"ALTER TABLE t_n DROP CHECK ident", true, "ALTER TABLE `t_n` DROP CHECK `ident`"},
+		{"ALTER TABLE t_n ALTER CONSTRAINT ident", false, ""},
+		{"ALTER TABLE t_n ALTER CONSTRAINT ident enforced", true, "ALTER TABLE `t_n` ALTER CHECK `ident` ENFORCED"},
+		{"ALTER TABLE t_n ALTER CHECK ident not enforced", true, "ALTER TABLE `t_n` ALTER CHECK `ident` NOT ENFORCED"},
 
 		{"alter table t analyze partition a", true, "ANALYZE TABLE `t` PARTITION `a`"},
 		{"alter table t analyze partition a with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` WITH 4 BUCKETS"},
@@ -2810,11 +2836,11 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"ALTER TABLE ident ADD ( CONSTRAINT FOREIGN KEY ident ( EXECUTE ( 123 ) ) REFERENCES t ( a ) MATCH SIMPLE ON DELETE CASCADE ON UPDATE SET NULL )", true, "ALTER TABLE `ident` ADD COLUMN (CONSTRAINT `ident` FOREIGN KEY (`EXECUTE`(123)) REFERENCES `t`(`a`) MATCH SIMPLE ON DELETE CASCADE ON UPDATE SET NULL)"},
 		// for CONSTRAINT cont'd, the following tests are for another aspect of the incompatibility
 		{"ALTER TABLE t ADD COLUMN a DATE CHECK ( a > 0 ) FIRST", true, "ALTER TABLE `t` ADD COLUMN `a` DATE CHECK(`a`>0) ENFORCED FIRST"},
-		{"ALTER TABLE t ADD a1 int CONSTRAINT ident CHECK ( a1 > 1 ) REFERENCES b ON DELETE CASCADE ON UPDATE CASCADE;", true, "ALTER TABLE `t` ADD COLUMN `a1` INT CHECK(`a1`>1) ENFORCED REFERENCES `b` ON DELETE CASCADE ON UPDATE CASCADE"},
+		{"ALTER TABLE t ADD a1 int CONSTRAINT ident CHECK ( a1 > 1 ) REFERENCES b ON DELETE CASCADE ON UPDATE CASCADE;", true, "ALTER TABLE `t` ADD COLUMN `a1` INT CONSTRAINT `ident` CHECK(`a1`>1) ENFORCED REFERENCES `b` ON DELETE CASCADE ON UPDATE CASCADE"},
 		{"ALTER TABLE t ADD COLUMN a DATE CONSTRAINT CHECK ( a > 0 ) FIRST", true, "ALTER TABLE `t` ADD COLUMN `a` DATE CHECK(`a`>0) ENFORCED FIRST"},
-		{"ALTER TABLE t ADD a TINYBLOB CONSTRAINT ident CHECK ( 1>2 ) REFERENCES b ON DELETE CASCADE ON UPDATE CASCADE", true, "ALTER TABLE `t` ADD COLUMN `a` TINYBLOB CHECK(1>2) ENFORCED REFERENCES `b` ON DELETE CASCADE ON UPDATE CASCADE"},
-		{"ALTER TABLE t ADD a2 int CONSTRAINT ident CHECK (a2 > 1) ENFORCED", true, "ALTER TABLE `t` ADD COLUMN `a2` INT CHECK(`a2`>1) ENFORCED"},
-		{"ALTER TABLE t ADD a2 int CONSTRAINT ident CHECK (a2 > 1) NOT ENFORCED", true, "ALTER TABLE `t` ADD COLUMN `a2` INT CHECK(`a2`>1) NOT ENFORCED"},
+		{"ALTER TABLE t ADD a TINYBLOB CONSTRAINT ident CHECK ( 1>2 ) REFERENCES b ON DELETE CASCADE ON UPDATE CASCADE", true, "ALTER TABLE `t` ADD COLUMN `a` TINYBLOB CONSTRAINT `ident` CHECK(1>2) ENFORCED REFERENCES `b` ON DELETE CASCADE ON UPDATE CASCADE"},
+		{"ALTER TABLE t ADD a2 int CONSTRAINT ident CHECK (a2 > 1) ENFORCED", true, "ALTER TABLE `t` ADD COLUMN `a2` INT CONSTRAINT `ident` CHECK(`a2`>1) ENFORCED"},
+		{"ALTER TABLE t ADD a2 int CONSTRAINT ident CHECK (a2 > 1) NOT ENFORCED", true, "ALTER TABLE `t` ADD COLUMN `a2` INT CONSTRAINT `ident` CHECK(`a2`>1) NOT ENFORCED"},
 		{"ALTER TABLE t ADD a2 int CONSTRAINT ident primary key REFERENCES b ON DELETE CASCADE ON UPDATE CASCADE;", false, ""},
 		{"ALTER TABLE t ADD a2 int CONSTRAINT ident primary key (a2))", false, ""},
 		{"ALTER TABLE t ADD a2 int CONSTRAINT ident unique key (a2))", false, ""},
@@ -2943,6 +2969,19 @@ func (s *testParserSuite) TestDDL(c *C) {
 		{"create table t (a bigint primary key auto_random(4), b varchar(100)) auto_random_base 200", true, "CREATE TABLE `t` (`a` BIGINT PRIMARY KEY AUTO_RANDOM(4),`b` VARCHAR(100)) AUTO_RANDOM_BASE = 200"},
 		{"alter table t auto_random_base = 50", true, "ALTER TABLE `t` AUTO_RANDOM_BASE = 50"},
 		{"alter table t auto_increment 30, auto_random_base 40", true, "ALTER TABLE `t` AUTO_INCREMENT = 30, AUTO_RANDOM_BASE = 40"},
+
+		// for alter sequence
+		{"alter sequence seq", false, ""},
+		{"alter sequence seq comment=\"haha\"", false, ""},
+		{"alter sequence seq start = 1", true, "ALTER SEQUENCE `seq` START WITH 1"},
+		{"alter sequence seq start with 1 increment by 1", true, "ALTER SEQUENCE `seq` START WITH 1 INCREMENT BY 1"},
+		{"alter sequence seq start with 1 increment by 2 minvalue 0 maxvalue 100", true, "ALTER SEQUENCE `seq` START WITH 1 INCREMENT BY 2 MINVALUE 0 MAXVALUE 100"},
+		{"alter sequence seq increment -1 start with -1 minvalue -1 maxvalue -1000 cache = 10 nocycle", true, "ALTER SEQUENCE `seq` INCREMENT BY -1 START WITH -1 MINVALUE -1 MAXVALUE -1000 CACHE 10 NOCYCLE"},
+		{"alter sequence if exists seq2 increment = 2", true, "ALTER SEQUENCE IF EXISTS `seq2` INCREMENT BY 2"},
+		{"alter sequence seq restart", true, "ALTER SEQUENCE `seq` RESTART"},
+		{"alter sequence seq start with 3 restart with 5", true, "ALTER SEQUENCE `seq` START WITH 3 RESTART WITH 5"},
+		{"alter sequence seq restart = 5", true, "ALTER SEQUENCE `seq` RESTART WITH 5"},
+		{"create sequence seq restart = 5", false, ""},
 	}
 	s.RunTest(c, table)
 }
@@ -3602,9 +3641,12 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"/* rds internal mark */ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, RELOAD, PROCESS, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES,      EXECUTE, REPLICATION SLAVE, REPLICATION CLIENT, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT,      TRIGGER on *.* to 'root2'@'%' identified by password '*sdsadsdsadssadsadsadsadsada' with grant option", true, "GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, DROP, REFERENCES, RELOAD, PROCESS, INDEX, ALTER, CREATE TEMPORARY TABLES, LOCK TABLES, EXECUTE /* UNSUPPORTED TYPE */ /* UNSUPPORTED TYPE */, CREATE VIEW, SHOW VIEW, CREATE ROUTINE, ALTER ROUTINE, CREATE USER, EVENT, TRIGGER ON *.* TO `root2`@`%` IDENTIFIED BY PASSWORD '*sdsadsdsadssadsadsadsadsada' WITH GRANT OPTION"},
 		{"GRANT 'role1', 'role2' TO 'user1'@'localhost', 'user2'@'localhost';", true, "GRANT `role1`@`%`, `role2`@`%` TO `user1`@`localhost`, `user2`@`localhost`"},
 		{"GRANT 'u1' TO 'u1';", true, "GRANT `u1`@`%` TO `u1`@`%`"},
+		{"GRANT 'app_read'@'%','app_write'@'%' TO 'rw_user1'@'localhost'", true, "GRANT `app_read`@`%`, `app_write`@`%` TO `rw_user1`@`localhost`"},
 		{"GRANT 'app_developer' TO 'dev1'@'localhost';", true, "GRANT `app_developer`@`%` TO `dev1`@`localhost`"},
 		{"GRANT SHUTDOWN ON *.* TO 'dev1'@'localhost';", true, "GRANT SHUTDOWN ON *.* TO `dev1`@`localhost`"},
 		{"GRANT CONFIG ON *.* TO 'dev1'@'localhost';", true, "GRANT CONFIG ON *.* TO `dev1`@`localhost`"},
+		{"GRANT APPLICATION_PASSWORD_ADMIN,AUDIT_ADMIN ON *.* TO 'root'@'localhost'", true, "GRANT APPLICATION_PASSWORD_ADMIN, AUDIT_ADMIN ON *.* TO `root`@`localhost`"},
+		{"GRANT LOAD FROM S3, SELECT INTO S3, INVOKE LAMBDA, INVOKE SAGEMAKER, INVOKE COMPREHEND ON *.* TO 'root'@'localhost'", true, "GRANT LOAD FROM S3, SELECT INTO S3, INVOKE LAMBDA, INVOKE SAGEMAKER, INVOKE COMPREHEND ON *.* TO `root`@`localhost`"},
 
 		// for revoke statement
 		{"REVOKE ALL ON db1.* FROM 'jeffrey'@'localhost';", true, "REVOKE ALL ON `db1`.* FROM `jeffrey`@`localhost`"},
@@ -3620,6 +3662,7 @@ func (s *testParserSuite) TestPrivilege(c *C) {
 		{"REVOKE 'role1', 'role2' FROM 'user1'@'localhost', 'user2'@'localhost';", true, "REVOKE `role1`@`%`, `role2`@`%` FROM `user1`@`localhost`, `user2`@`localhost`"},
 		{"REVOKE SHUTDOWN ON *.* FROM 'dev1'@'localhost';", true, "REVOKE SHUTDOWN ON *.* FROM `dev1`@`localhost`"},
 		{"REVOKE CONFIG ON *.* FROM 'dev1'@'localhost';", true, "REVOKE CONFIG ON *.* FROM `dev1`@`localhost`"},
+		{"REVOKE APPLICATION_PASSWORD_ADMIN,AUDIT_ADMIN ON *.* FROM 'root'@'localhost'", true, "REVOKE APPLICATION_PASSWORD_ADMIN, AUDIT_ADMIN ON *.* FROM `root`@`localhost`"},
 	}
 	s.RunTest(c, table)
 }

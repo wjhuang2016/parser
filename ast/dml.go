@@ -1426,6 +1426,9 @@ type InsertStmt struct {
 	Priority    mysql.PriorityEnum
 	OnDuplicate []*Assignment
 	Select      ResultSetNode
+	// TableHints represents the table level Optimizer Hint for join type.
+	TableHints     []*TableOptimizerHint
+	PartitionNames []model.CIStr
 }
 
 // Restore implements Node interface.
@@ -1447,6 +1450,17 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("INTO ")
 	if err := n.Table.Restore(ctx); err != nil {
 		return errors.Annotate(err, "An error occurred while restore InsertStmt.Table")
+	}
+	if len(n.PartitionNames) != 0 {
+		ctx.WriteKeyWord(" PARTITION")
+		ctx.WritePlain("(")
+		for i := 0; i < len(n.PartitionNames); i++ {
+			if i != 0 {
+				ctx.WritePlain(", ")
+			}
+			ctx.WriteName(n.PartitionNames[i].String())
+		}
+		ctx.WritePlain(")")
 	}
 	if n.Columns != nil {
 		ctx.WritePlain(" (")

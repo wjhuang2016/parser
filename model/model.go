@@ -212,17 +212,24 @@ type TableInfo struct {
 	Charset string `json:"charset"`
 	Collate string `json:"collate"`
 	// Columns are listed in the order in which they appear in the schema.
-	Columns     []*ColumnInfo `json:"cols"`
-	Indices     []*IndexInfo  `json:"index_info"`
-	ForeignKeys []*FKInfo     `json:"fk_info"`
-	State       SchemaState   `json:"state"`
-	PKIsHandle  bool          `json:"pk_is_handle"`
-	Comment     string        `json:"comment"`
-	AutoIncID   int64         `json:"auto_inc_id"`
-	AutoIdCache int64         `json:"auto_id_cache"`
-	AutoRandID  int64         `json:"auto_rand_id"`
-	MaxColumnID int64         `json:"max_col_id"`
-	MaxIndexID  int64         `json:"max_idx_id"`
+	Columns     []*ColumnInfo     `json:"cols"`
+	Indices     []*IndexInfo      `json:"index_info"`
+	ForeignKeys []*FKInfo         `json:"fk_info"`
+	Constraints []*ConstraintInfo `json:"constraint_info"`
+	State       SchemaState       `json:"state"`
+	// PKIsHandle is true when primary key is a single integer column.
+	PKIsHandle bool `json:"pk_is_handle"`
+	// IsCommonHandle is true when clustered index feature is
+	// enabled and the primary key is not a single integer column.
+	IsCommonHandle bool `json:"is_common_handle"`
+
+	Comment         string `json:"comment"`
+	AutoIncID       int64  `json:"auto_inc_id"`
+	AutoIdCache     int64  `json:"auto_id_cache"`
+	AutoRandID      int64  `json:"auto_rand_id"`
+	MaxColumnID     int64  `json:"max_col_id"`
+	MaxIndexID      int64  `json:"max_idx_id"`
+	MaxConstraintID int64  `json:"max_cst_id"`
 	// UpdateTS is used to record the timestamp of updating the table's schema information.
 	// These changing schema operations don't include 'truncate table' and 'rename table'.
 	UpdateTS uint64 `json:"update_timestamp"`
@@ -682,10 +689,12 @@ func (pi *PartitionInfo) GetNameByID(id int64) string {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID       int64    `json:"id"`
-	Name     CIStr    `json:"name"`
-	LessThan []string `json:"less_than"`
-	Comment  string   `json:"comment,omitempty"`
+	ID        int64      `json:"id"`
+	Name      CIStr      `json:"name"`
+	LessThan  []string   `json:"less_than"`
+	InValues  [][]string `json:"in_values"`
+	IsDefault bool       `json:"is_default"`
+	Comment   string     `json:"comment,omitempty"`
 }
 
 // IndexColumn provides index column info.
@@ -743,6 +752,7 @@ type IndexInfo struct {
 	Unique    bool           `json:"is_unique"`    // Whether the index is unique.
 	Primary   bool           `json:"is_primary"`   // Whether the index is primary key.
 	Invisible bool           `json:"is_invisible"` // Whether the index is invisible.
+	Global    bool           `json:"is_global"`    // Whether the index is global.
 }
 
 // Clone clones IndexInfo.
@@ -763,6 +773,38 @@ func (index *IndexInfo) HasPrefixIndex() bool {
 		}
 	}
 	return false
+}
+
+// ConstraintInfo provides meta data describing check-expression constraint.
+type ConstraintInfo struct {
+	ID             int64       `json:"id"`
+	Name           CIStr       `json:"constraint_name"`
+	Table          CIStr       `json:"tbl_name"`        // Table name.
+	ConstraintCols []CIStr     `json:"constraint_cols"` // Depended column names.
+	Enforced       bool        `json:"enforced"`
+	InColumn       bool        `json:"in_column"` // Indicate whether the constraint is column type check.
+	ExprString     string      `json:"expr_string"`
+	State          SchemaState `json:"state"`
+}
+
+// Clone clones ConstraintInfo.
+func (ci *ConstraintInfo) Clone() *ConstraintInfo {
+	nci := *ci
+
+	nci.ConstraintCols = make([]CIStr, len(ci.ConstraintCols))
+	copy(nci.ConstraintCols, ci.ConstraintCols)
+	return &nci
+}
+
+// FindConstraintInfoByName finds constraintInfo by name.
+func (t *TableInfo) FindConstraintInfoByName(constrName string) *ConstraintInfo {
+	lowConstrName := strings.ToLower(constrName)
+	for _, chk := range t.Constraints {
+		if chk.Name.L == lowConstrName {
+			return chk
+		}
+	}
+	return nil
 }
 
 // FKInfo provides meta data describing a foreign key constraint.
