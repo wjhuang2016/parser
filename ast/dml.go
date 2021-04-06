@@ -1740,6 +1740,13 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*DeleteStmt)
+	if n.With != nil {
+		node, ok := n.With.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.With = node.(*WithClause)
+	}
 	node, ok := n.TableRefs.Accept(v)
 	if !ok {
 		return n, false
@@ -1878,6 +1885,13 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*UpdateStmt)
+	if n.With != nil {
+		node, ok := n.With.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.With = node.(*WithClause)
+	}
 	node, ok := n.TableRefs.Accept(v)
 	if !ok {
 		return n, false
