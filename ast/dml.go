@@ -1589,10 +1589,18 @@ type DeleteStmt struct {
 	BeforeFrom   bool
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints []*TableOptimizerHint
+	With       *WithClause
 }
 
 // Restore implements Node interface.
 func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.With != nil {
+		err := n.With.Restore(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
 	ctx.WriteKeyWord("DELETE ")
 
 	if n.TableHints != nil && len(n.TableHints) != 0 {
@@ -1731,10 +1739,18 @@ type UpdateStmt struct {
 	IgnoreErr     bool
 	MultipleTable bool
 	TableHints    []*TableOptimizerHint
+	With          *WithClause
 }
 
 // Restore implements Node interface.
 func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
+	if n.With != nil {
+		err := n.With.Restore(ctx)
+		if err != nil {
+			return err
+		}
+	}
+
 	ctx.WriteKeyWord("UPDATE ")
 
 	if n.TableHints != nil && len(n.TableHints) != 0 {
