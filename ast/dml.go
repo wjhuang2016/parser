@@ -778,7 +778,8 @@ type CommonTableExpression struct {
 type WithClause struct {
 	node
 
-	CTEs []*CommonTableExpression
+	IsRecursive bool
+	CTEs        []*CommonTableExpression
 }
 
 // SelectStmt represents the select query node.
@@ -824,6 +825,9 @@ type SelectStmt struct {
 
 func (n *WithClause) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("WITH ")
+	if n.IsRecursive {
+		ctx.WriteKeyWord("RECURSIVE ")
+	}
 	first := true
 	for _, cte := range n.CTEs {
 		if !first {

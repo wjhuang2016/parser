@@ -220,6 +220,7 @@ import (
 	rank              "RANK"
 	read              "READ"
 	realType          "REAL"
+	recursive         "RECURSIVE"
 	references        "REFERENCES"
 	regexpKwd         "REGEXP"
 	release           "RELEASE"
@@ -1109,7 +1110,6 @@ import (
 	OptNullTreatment                       "Optional NULL treatment"
 	OptPartitionClause                     "Optional PARTITION clause"
 	OptWild                                "Optional Wildcard"
-	OptWithClause                          "Optional with Clause"
 	OptWindowOrderByClause                 "Optional ORDER BY clause in WINDOW"
 	OptWindowFrameClause                   "Optional FRAME clause in WINDOW"
 	OptWindowingClause                     "Optional OVER clause"
@@ -7202,13 +7202,12 @@ WithClause:
 	{
 		$$ = $2
 	}
-
-OptWithClause:
-	/* empty */
+|	"WITH" recursive WithList
 	{
-		$$ = nil
+		ws := $3.(*ast.WithClause)
+		ws.IsRecursive = true
+		$$ = ws
 	}
-|	WithClause
 
 WithList:
 	WithList ',' CommonTableExpr
